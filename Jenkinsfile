@@ -2,137 +2,138 @@ pipeline {
     agent any
 
     environment {
-        // Must match the JDK 17 name configured in Jenkins > Tools > JDK
-        JAVA_HOME  = tool 'JDK17'
-        // Must match the Maven name configured in Jenkins > Tools > Maven
-        MAVEN_HOME = tool 'Maven3'
-        PATH       = "${JAVA_HOME}/bin:${MAVEN_HOME}/bin:${env.PATH}"
-
         APP_NAME    = 'task-manager'
         APP_VERSION = '1.0.0'
+        IMAGE_NAME  = "taskmanager/${APP_NAME}"
 
-        // Spring datasource overrides so tests don't need a real PostgreSQL instance.
-        // Jenkins will use an in-memory H2 database during the Test stage.
-        // These env vars are picked up automatically by Spring Boot's test context.
+        // ── Test database config ──────────────────────────────────
+        // Your tests use pure Mockito (no @SpringBootTest),
+        // so no real DB is needed. These are just passed in case
+        // any test context spins up — H2 is already in your pom.xml.
         SPRING_DATASOURCE_URL      = 'jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL'
         SPRING_DATASOURCE_DRIVER   = 'org.h2.Driver'
         SPRING_DATASOURCE_USERNAME = 'sa'
         SPRING_DATASOURCE_PASSWORD = ''
-        SPRING_JPA_DATABASE        = 'h2'
 
-        // Dummy JWT secret for tests — never commit real secrets to source control
-        JWT_SECRET = 'jenkins-ci-dummy-secret-32-chars!!'
+        // ── JWT secret ────────────────────────────────────────────
+        // Matches @Value("${app.jwtSecret}") in JwtTokenProvider.java
+        // Must be at least 64 chars for HS512
+        JWT_SECRET = 'jenkins-ci-test-secret-key-minimum-64-characters-long-for-hs512!!'
     }
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 20, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
         timestamps()
     }
 
     stages {
 
-        // ──────────────────────────────────────────
+        // ──────────────────────────────────────────────────────────
         // STAGE 1: Checkout
-        // Pulls your TaskManager repo from GitHub.
-        // ──────────────────────────────────────────
+        // Jenkins pulls the repo automatically via 'Pipeline from SCM'.
+        // ──────────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
-                echo "Checking out AlexDorinIrimia/TaskManager..."
+                echo "Checking out TaskManager..."
                 checkout scm
             }
         }
 
-        // ──────────────────────────────────────────
-        // STAGE 2: Build
-        // Compiles the Spring Boot app with Maven.
-        // -DskipTests here — tests run in Stage 3.
-        // The spring-boot-maven-plugin produces a
-        // fat JAR (task-manager-1.0.0.jar) in target/.
-        // ──────────────────────────────────────────
-        stage('Build') {
-            steps {
-                echo "Building ${APP_NAME} v${APP_VERSION}..."
-                sh 'mvn clean package -DskipTests'
-            }
-            post {
-                success {
-                    echo "Build successful! Archiving artifact..."
-                    // Archives the fat JAR — visible in Jenkins under 'Build Artifacts'
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                }
-                failure {
-                    echo "Build failed. Check for compilation errors above."
+        // ──────────────────────────────────────────────────────────
+        // STAGE 2: Build & Test
+        // Runs inside the official Maven+JDK17 Docker image so
+        // Jenkins doesn't need Java or Maven installed locally.
+        //
+        // Your tests (TaskServiceTest, ProjectServiceTest, etc.)
+        // use Mockito only — no DB, no Spring context startup.
+        // ──────────────────────────────────────────────────────────
+        stage('Build & Test') {
+            agent {
+                docker {
+                    image 'maven:3.9.6-eclipse-temurin-17'
+                    // Persist the Maven local repo between builds for speed
+                    args '-v maven-repo-cache:/root/.m2'
+                    reuseNode true
                 }
             }
-        }
-
-        // ──────────────────────────────────────────
-        // STAGE 3: Test
-        // Runs Spring Boot tests against H2 in-memory
-        // DB so no real PostgreSQL is needed in CI.
-        //
-        // NOTE: Add this dependency to your pom.xml
-        // so Spring Boot can use H2 during tests:
-        //
-        //   <dependency>
-        //     <groupId>com.h2database</groupId>
-        //     <artifactId>h2</artifactId>
-        //     <scope>test</scope>
-        //   </dependency>
-        //
-        // ──────────────────────────────────────────
-        stage('Test') {
             steps {
-                echo "Running unit & integration tests..."
-                sh '''
-                    mvn test \
+                echo "Compiling and running tests..."
+                sh """
+                    mvn clean verify \
                         -Dspring.datasource.url=${SPRING_DATASOURCE_URL} \
                         -Dspring.datasource.driver-class-name=${SPRING_DATASOURCE_DRIVER} \
                         -Dspring.datasource.username=${SPRING_DATASOURCE_USERNAME} \
                         -Dspring.datasource.password=${SPRING_DATASOURCE_PASSWORD} \
                         -Dspring.jpa.database-platform=org.hibernate.dialect.H2Dialect \
-                        -Djwt.secret=${JWT_SECRET}
-                '''
+                        -Dapp.jwtSecret=${JWT_SECRET} \
+                        -B
+                """
             }
             post {
                 always {
-                    // Publishes JUnit XML results — shows a test trend graph in Jenkins
+                    // Publish JUnit results — Jenkins shows pass/fail trend graph
+                    // Your surefire XMLs are already in target/surefire-reports/
                     junit '**/target/surefire-reports/*.xml'
                 }
                 success {
-                    echo "All tests passed!"
+                    // Archive the fat JAR — downloadable from Jenkins UI
+                    archiveArtifacts artifacts: 'target/task-manager-1.0.0.jar', fingerprint: true
+                    echo "Build & tests passed!"
                 }
                 failure {
-                    echo "Some tests failed. Check the Test Results tab for details."
+                    echo "Build or tests failed. Check the console output above."
                 }
             }
         }
 
-        // ──────────────────────────────────────────
-        // STAGE 4: Verify
-        // Runs the full Maven verify lifecycle which
-        // covers integration tests and any plugins
-        // bound to the verify phase (e.g. JaCoCo).
-        // ──────────────────────────────────────────
-        stage('Verify') {
+        // ──────────────────────────────────────────────────────────
+        // STAGE 3: Build Docker Image
+        // Builds the production Docker image using your Dockerfile.
+        // Jenkins can do this because docker.sock is mounted in the
+        // Jenkins container (configured in docker-compose.yml).
+        // ──────────────────────────────────────────────────────────
+        stage('Build Docker Image') {
             steps {
-                echo "Running Maven verify (integration tests + coverage)..."
-                sh '''
-                    mvn verify \
-                        -DskipUnitTests=true \
-                        -Dspring.datasource.url=${SPRING_DATASOURCE_URL} \
-                        -Dspring.datasource.driver-class-name=${SPRING_DATASOURCE_DRIVER} \
-                        -Dspring.datasource.username=${SPRING_DATASOURCE_USERNAME} \
-                        -Dspring.datasource.password=${SPRING_DATASOURCE_PASSWORD} \
-                        -Dspring.jpa.database-platform=org.hibernate.dialect.H2Dialect \
-                        -Djwt.secret=${JWT_SECRET}
-                '''
+                echo "Building Docker image: ${IMAGE_NAME}:${APP_VERSION}..."
+                script {
+                    docker.build("${IMAGE_NAME}:${APP_VERSION}", ".")
+                    docker.build("${IMAGE_NAME}:latest", ".")
+                }
+            }
+            post {
+                success {
+                    echo "Image built: ${IMAGE_NAME}:${APP_VERSION}"
+                }
+                failure {
+                    echo "Docker image build failed."
+                }
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────
+        // STAGE 4: Security Scan
+        // Trivy scans the Docker image for known CVEs.
+        // --exit-code 0 means the pipeline won't fail on findings —
+        // change to 1 if you want CRITICAL vulnerabilities to fail CI.
+        // ──────────────────────────────────────────────────────────
+        stage('Security Scan') {
+            steps {
+                echo "Scanning ${IMAGE_NAME}:${APP_VERSION} for vulnerabilities..."
+                sh """
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest image \
+                        --exit-code 0 \
+                        --severity HIGH,CRITICAL \
+                        --no-progress \
+                        ${IMAGE_NAME}:${APP_VERSION}
+                """
             }
             post {
                 always {
-                    echo "Verify stage complete."
+                    echo "Security scan complete."
                 }
             }
         }
@@ -141,12 +142,13 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline passed for ${APP_NAME} v${APP_VERSION}!"
+            echo "Pipeline passed! ${IMAGE_NAME}:${APP_VERSION} is ready."
         }
         failure {
             echo "Pipeline FAILED for ${APP_NAME}. Review the logs above."
         }
         always {
+            sh 'docker image prune -f || true'
             cleanWs()
         }
     }
