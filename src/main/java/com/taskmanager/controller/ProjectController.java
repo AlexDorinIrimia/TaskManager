@@ -13,8 +13,12 @@ import java.util.Set;
 @RequestMapping("/api/projects")
 public class ProjectController {
 
+    private final ProjectService projectService;
+
     @Autowired
-    private ProjectService projectService;
+    public ProjectController(ProjectService projectService) {
+        this.projectService = projectService;
+    }
 
     // GET /api/projects
     @GetMapping

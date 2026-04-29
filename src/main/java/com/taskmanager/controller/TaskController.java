@@ -14,8 +14,12 @@ import java.util.Set;
 @RequestMapping("/api/tasks")
 public class TaskController {
 
+    private final TaskService taskService;
+
     @Autowired
-    private TaskService taskService;
+    public TaskController(TaskService taskService) {
+        this.taskService = taskService;
+    }
 
     // GET /api/tasks
     @GetMapping
