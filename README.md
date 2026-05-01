@@ -115,6 +115,22 @@ docker compose down -v
 
 ```
 TaskManager/
+├── frontend/
+│        ├── src/
+│        │       ├── componets/       #Sidebar
+│        │       ├── pages/           #Tasks, Users, Projects, Dashboard, Login pages
+│        │       ├── context/         #Auth context
+│        │       ├── services/        #API
+│        │       ├── App.jsx
+│        │       ├── index.css
+│        │       └── index.jsx
+│        ├── public/
+│        ├── Dockerfile.frontend
+│        ├── nginx.frontend.conf
+│        ├── packaege.json
+│        ├── eslnit.config.js
+│        ├── vite.config.js
+│        └── index.html
 ├── src/
 │   └── main/
 │       ├── java/com/taskmanager/
@@ -136,7 +152,7 @@ TaskManager/
 │   ├── cert.pem
 │   └── key.pem
 └── scripts/
-    └── setup-certs.ps1                  ← Windows cert generator
+    └── setup-certs.sh                  ← Cert generator
 ```
 
 > **Security note:** The `certs/` folder is git-ignored. Never commit private keys.
