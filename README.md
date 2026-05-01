@@ -35,9 +35,14 @@ Browser (HTTPS :443)
 ## Setup (one time)
 
 **1. Generate TLS certificates**
-From Git Bash:
+
+In PowerShell from the project root:
+```powershell
+.\scripts\setup-certs.ps1
+```
+Or from Git Bash:
 ```bash
-bash scripts/setup-certs.sh
+bash scripts/setup-certs.ps1
 ```
 
 **2. Start everything**
