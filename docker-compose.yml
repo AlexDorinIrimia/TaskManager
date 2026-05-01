@@ -1,21 +1,21 @@
-version: '3.8'
-
 # ─────────────────────────────────────────────────────────────────
 # TaskManager — Full Stack Docker Compose (Windows)
 #
 # Services:
 #   postgres  — PostgreSQL 16 database
-#   app       — Spring Boot TaskManager API (built from Dockerfile)
+#   app       — Spring Boot TaskManager API
+#   frontend  — React app (built with Node, served by Nginx)
 #   nginx     — Reverse proxy with TLS (HTTPS on port 443)
 #   jenkins   — CI/CD server (http://localhost:8090)
 #
 # First-time setup:
-#   1. Run: .\scripts\setup-certs.ps1
-#   2. Run: docker compose up -d
+#   1. bash scripts/setup-certs.sh
+#   2. docker compose up -d --build
 #
 # Access:
-#   API  → https://localhost
-#   Jenkins → http://localhost:8090
+#   React UI  → https://localhost
+#   API       → https://localhost/api/...
+#   Jenkins   → http://localhost:8090
 # ─────────────────────────────────────────────────────────────────
 
 services:
@@ -30,7 +30,7 @@ services:
     environment:
       POSTGRES_DB: taskmanager
       POSTGRES_USER: taskuser
-      POSTGRES_PASSWORD: taskpassword    # Change in production!
+      POSTGRES_PASSWORD: taskpassword
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -43,8 +43,7 @@ services:
 
   # ─────────────────────────────────────────────
   # Spring Boot App
-  # Built from your Dockerfile (multi-stage build).
-  # Not exposed directly — traffic goes via Nginx.
+  # Not exposed directly — Nginx proxies /api/ to it.
   # ─────────────────────────────────────────────
   app:
     build:
@@ -56,22 +55,33 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # Matches spring.datasource.url=${SPRING_DATASOURCE_URL} in application.properties
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/taskmanager
       SPRING_DATASOURCE_USERNAME: taskuser
       SPRING_DATASOURCE_PASSWORD: taskpassword
-
-      # Matches @Value("${app.jwtSecret}") in JwtTokenProvider.java
-      # Use a long random string — min 64 chars for HS512
-      JWT_SECRET: change-this-to-a-long-random-secret-min-64-chars-for-hs512!!
+      JWT_SECRET: 40776da6500c96f1a17ea620c6e52f06ac2ea071c940a62789df75427a9cbe64
     networks:
       - backend
-    # No ports exposed — Nginx is the only entry point
 
   # ─────────────────────────────────────────────
-  # Nginx — TLS Termination
-  # Listens on 443 (HTTPS) and 80 (→ redirects).
-  # Forwards decrypted traffic to app:8080 internally.
+  # React Frontend
+  # Dockerfile.frontend does a multi-stage build:
+  #   Stage 1 (node:18) — npm install + npm run build
+  #   Stage 2 (nginx)   — serves the /build folder
+  # Nginx proxies to this container for all non-API requests.
+  # ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: taskmanager-frontend
+    restart: unless-stopped
+    networks:
+      - backend
+
+  # ─────────────────────────────────────────────
+  # Nginx — TLS + Routing
+  #   /api/* and /auth/* → Spring Boot (app:8080)
+  #   everything else    → React frontend (frontend:80)
   # ─────────────────────────────────────────────
   nginx:
     image: nginx:alpine
@@ -79,9 +89,10 @@ services:
     restart: unless-stopped
     depends_on:
       - app
+      - frontend
     ports:
-      - "80:80"      # HTTP → redirected to HTTPS
-      - "443:443"    # HTTPS (self-signed cert for local dev)
+      - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/nginx/certs:ro
@@ -90,22 +101,18 @@ services:
 
   # ─────────────────────────────────────────────
   # Jenkins CI/CD
-  # Runs Jenkins with Docker socket mounted so it
-  # can build Docker images from within the pipeline.
-  # Access: http://localhost:8090
   # ─────────────────────────────────────────────
   jenkins:
     image: jenkins/jenkins:lts-jdk17
     container_name: taskmanager-jenkins
     restart: unless-stopped
-    privileged: true    # Needed for Docker-in-Docker
-    user: root          # Needed to access Docker socket
+    privileged: true
+    user: root
     ports:
-      - "8090:8080"     # Jenkins UI
-      - "50000:50000"   # Jenkins agent communication port
+      - "8090:8080"
+      - "50000:50000"
     volumes:
       - jenkins_data:/var/jenkins_home
-      # Mount host Docker socket — lets Jenkins build Docker images
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - backend

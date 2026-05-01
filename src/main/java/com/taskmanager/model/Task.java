@@ -1,8 +1,6 @@
-// ==========================
-// Entity: Task
-// ==========================
 package com.taskmanager.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 
 import java.time.LocalDate;
@@ -29,6 +27,9 @@ public class Task {
 
     @ManyToOne
     @JoinColumn(name = "project_id")
+    // When serializing a Task's project, don't include the project's tasks list
+    // This prevents Task → Project → Task → Project... infinite loop
+    @JsonIgnoreProperties({"tasks", "members"})
     private Project project;
 
     @ManyToMany
@@ -37,15 +38,15 @@ public class Task {
             joinColumns = @JoinColumn(name = "task_id"),
             inverseJoinColumns = @JoinColumn(name = "user_id")
     )
+    // Don't serialize assigned users' own tasks — breaks circular ref
+    @JsonIgnoreProperties({"tasks", "projects", "password"})
     private Set<User> assignedUsers = new HashSet<>();
 
     public enum Status {
         TODO, IN_PROGRESS, DONE
     }
 
-    // Constructors
-    public Task() {
-    }
+    public Task() {}
 
     public Task(String title, String description, LocalDate deadline) {
         this.title = title;
@@ -53,59 +54,24 @@ public class Task {
         this.deadline = deadline;
     }
 
-    public Long getId() {
-        return id;
-    }
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
 
-    public void setId(Long id) {
-        this.id = id;
-    }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
 
-    public String getTitle() {
-        return title;
-    }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
 
-    public void setTitle(String title) {
-        this.title = title;
-    }
+    public Status getStatus() { return status; }
+    public void setStatus(Status status) { this.status = status; }
 
-    public String getDescription() {
-        return description;
-    }
+    public LocalDate getDeadline() { return deadline; }
+    public void setDeadline(LocalDate deadline) { this.deadline = deadline; }
 
-    public void setDescription(String description) {
-        this.description = description;
-    }
+    public Project getProject() { return project; }
+    public void setProject(Project project) { this.project = project; }
 
-    public Status getStatus() {
-        return status;
-    }
-
-    public void setStatus(Status status) {
-        this.status = status;
-    }
-
-    public LocalDate getDeadline() {
-        return deadline;
-    }
-
-    public void setDeadline(LocalDate deadline) {
-        this.deadline = deadline;
-    }
-
-    public Project getProject() {
-        return project;
-    }
-
-    public void setProject(Project project) {
-        this.project = project;
-    }
-
-    public Set<User> getAssignedUsers() {
-        return assignedUsers;
-    }
-
-    public void setAssignedUsers(Set<User> assignedUsers) {
-        this.assignedUsers = assignedUsers;
-    }
+    public Set<User> getAssignedUsers() { return assignedUsers; }
+    public void setAssignedUsers(Set<User> assignedUsers) { this.assignedUsers = assignedUsers; }
 }
