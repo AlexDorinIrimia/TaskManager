@@ -148,11 +148,6 @@ TaskManager/
 ├── Jenkinsfile                          ← CI/CD pipeline
 ├── nginx/
 │   └── nginx.conf                       ← TLS reverse proxy
-├── certs/                               ← Generated (git-ignored)
-│   ├── cert.pem
-│   └── key.pem
 └── scripts/
     └── setup-certs.sh                  ← Cert generator
 ```
-
-> **Security note:** The `certs/` folder is git-ignored. Never commit private keys.
